@@ -5,4 +5,5 @@ The input argument should be similiar to bellow, which capture 3 TCP packet from
 sudo ./booya.o -t wls3 -u enp0s10 -c 3
 
 For compling by gcc use this command and also libpcap should be installed. 
+
 gcc booya.c -o booya.o -lpcap
