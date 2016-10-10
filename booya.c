@@ -8,10 +8,22 @@
 #include <unistd.h>
 #include <string.h>
 #include <syslog.h>
+#include <pthread.h>
+
+
+pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
+//pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
+
 
 pcap_t* descr;
 char * tp;
 char *s_dev;
+
+struct n_arg_struct {
+  char *type;
+  char *dev;
+  int  count;
+};
 
 void my_callback(u_char *useless,const struct pcap_pkthdr* pkthdr,const u_char*
   packet);
@@ -22,7 +34,6 @@ void my_callback(u_char *useless,const struct pcap_pkthdr* pkthdr,const u_char*
     openlog("slog", LOG_PID|LOG_CONS, LOG_USER);
     syslog(LOG_INFO, "Sniffing started! ");
 
-
     char errbuf[PCAP_ERRBUF_SIZE];
     struct bpf_program fp;        /* to hold compiled program */
     bpf_u_int32 pMask;            /* subnet mask */
@@ -32,6 +43,8 @@ void my_callback(u_char *useless,const struct pcap_pkthdr* pkthdr,const u_char*
 
     const u_char *packet; //new
     struct pcap_pkthdr hdr;     /* pcap.h                    *///new
+
+    pthread_mutex_lock( &mutex1 );
     s_dev=dev;
     pcap_lookupnet(dev, &pNet, &pMask, errbuf);
     descr = pcap_open_live(dev, BUFSIZ, 0, count, errbuf);
@@ -53,51 +66,97 @@ void my_callback(u_char *useless,const struct pcap_pkthdr* pkthdr,const u_char*
     /* ... and loop */
     pcap_loop(descr, count, my_callback,NULL);
 
+    pthread_mutex_unlock( &mutex1 );
     syslog(LOG_INFO, "End of sniffing ");
     closelog();
 
     return 0;
   }
 
+  void *convert(void *arguments){
+    struct n_arg_struct *args = arguments;
+    //  pthread_mutex_lock( &mutex2 );
+    tp=args->type;
+    pktinit(args->type, args->dev, args->count);
+    //  pthread_mutex_unlock( &mutex2 );
+    pthread_exit(NULL);
+    return NULL;
+  }
+
   int main(int argc, char **argv) {
-    int pid,i;
+
     if(argc < 7) {
       fprintf(stderr,"Command needs more argument!\n");
       return 0;
     }
 
-    for (int i=0; i<3; i+=2) {
+    int c;
+    int digit_optind = 0;
+    //  int aopt = 0, bopt = 0;
+    char *copt = 0, *topt=0, *uopt=0;
+    while ( (c = getopt(argc, argv, "t:u:c:")) != -1) {
+      int this_option_optind = optind ? optind : 1;
+      switch (c) {
+        case 't':
+        topt = optarg;
+        break;
+        case 'u':
+        uopt = optarg;
+        break;
+        case 'c':
+        copt = optarg;
+        break;
 
-      if((pid=fork()) != -1) {
-
-        char type[]="tcp";
-        tp="tcp";
-        if (strcmp(argv[i+1], "-u")==0) {
-          strcpy (type, "udp");
-          tp="udp";
-        }
-
-        pktinit(type, argv[i+2], strtol (argv[6], NULL, 10));
-      }
-      else
-      {
-        fprintf(stderr,"pacp failed for: %s\n", argv[i]);
-        return 1;
+        case '?':
+        break;
+        default:
+        printf ("?? getopt returned character code 0%o ??\n", c);
       }
     }
+    if (optind < argc) {
+      printf ("non-option ARGV-elements: ");
+      while (optind < argc)
+      printf ("%s ", argv[optind++]);
+      printf ("\n");
+    }
+
+    int pid,i;
+
+    pthread_t thread1, thread2;
+    int  iret1, iret2;
+    struct n_arg_struct fi_th;
+    struct n_arg_struct se_th;
+
+    fi_th.type="tcp";
+    fi_th.dev=topt;
+    fi_th.count=strtol (copt, NULL, 10);
+
+    se_th.type= "udp";
+    se_th.dev=uopt;
+    se_th.count=strtol (copt, NULL, 10);
+
+    if (pthread_create( &thread1, NULL, convert, (void*) &fi_th) != 0) {
+      printf("Problem in Creation of Thread!\n");
+      return -1;
+    }
+
+    if (pthread_create( &thread2, NULL, convert, (void*) &se_th) != 0) {
+      printf("Problem in Creation of Thread!\n");
+      return -1;
+    }
+    return pthread_join(thread1, NULL); /* Wait until thread is finished */
+    return pthread_join(thread2, NULL); /* Wait until thread is finished */
+
     return 0;
   }
 
   void my_callback(u_char *useless,const struct pcap_pkthdr* pkthdr,const u_char*
     packet) {
 
-      //  static int cnt = 1;
-      //  fprintf(stdout,"%d, ",cnt);
-      //  fflush(stdout);
-      //  cnt++;
-
       //+1 for the zero-terminator and another +1 for underscore
       char *result = malloc(strlen(s_dev)+strlen(tp)+strlen("snf.pcap")+1+1);
+      //  printf("%s\n", s_dev);
+
       if(result == NULL) {
         printf("Memory allocation failed in file name creation");
         return ;
